@@ -2,7 +2,8 @@
 
 # About
 
-This repository contains code related to PLSR model for predicting small molecule partitioning in 2023 Kilgore et al., Nature Chemical Biology. Written by Kalon Overholt
+This repository contains code related to PLSR model for predicting small molecule partitioning in 2023 Kilgore et al., Nature Chemical Biology. 
+Written by Kalon Overholt.
 
 
 ## Contents
