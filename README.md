@@ -7,7 +7,7 @@ Written by Kalon Overholt.
 
 
 ## Contents
-1.	**partition_PLSR.Rmd** - An R notebook for performing PLSR using chemical structures and physicochemical properties to predict small molecule partitioning data.
+1.	**partition_plsr.Rmd** - An R notebook for performing PLSR using chemical structures and physicochemical properties to predict small molecule partitioning data.
 2.	**plsr_validate.R** - An R script for performing PLSR model validation.
 
 
