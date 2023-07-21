@@ -1,0 +1,302 @@
+---
+title: "R Notebook"
+Working version as of 1/11/23
+---
+See http://www.science.smith.edu/~jcrouser/SDS293/labs/lab11-r.html
+```{r}
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(stringr)
+library(ISLR)
+library(tidyr)
+library(pls)
+library(plsVarSel)
+library(plotly)
+
+memory.limit(45000)
+set.seed(10097)
+```
+
+```{r}
+# Load in the data
+filename <- 'hp1_pls_inputs_211215_withML.csv'
+X <-  read.csv(filename,row.names=NULL,header=TRUE,check.names=FALSE)
+colnames(X) <- make.unique(colnames(X))
+X[is.na(X)] <- 0 # Replace NA with 0 (justified?)
+x_full <- X
+
+# Drop columns and write file containing them
+X <- X %>% select(where(~n_distinct(.) > 1))
+X <-  X[,colSums(X) > 8]
+
+dropped <- x_full %>%
+    select(-colnames(X))
+
+write.csv(dropped,'hp1_withML_dropped.csv')
+
+# Generate train and test sets
+train = X %>%
+  sample_frac(0.8)
+
+test = X %>%
+  setdiff(train)
+
+y <- log10(X$'Partition Ratio Probe')
+y_train <- log10(train$'Partition Ratio Probe')
+y_test <- log10(test$'Partition Ratio Probe')
+
+# Remove y from the X data matrices
+X <- X[,2:ncol(X)]
+train <- train[,2:ncol(train)]
+test <- test[,2:ncol(test)]
+
+x_train <-  model.matrix(y_train~., train)[,-1]
+x_test <-  model.matrix(y_test~., test)[,-1]
+```
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Partial Least Squares Regression (PLSR)
+```{r}
+# Train the PLSR model
+set.seed(10097)
+
+pls_fit <-  plsr(y_train~., data = train, scale = TRUE, validation = "CV")
+# summary(pls_fit)
+validationplot(pls_fit, val.type = "MSEP")
+```
+
+```{r}
+# Select dimensions for lowest cross-validation error
+MSEP_pls <-  MSEP(pls_fit)
+cvs_pls <- MSEP_pls$val[1,1, ]
+ind_pls <- which.min(cvs_pls)
+dims_pls <- ind_pls-1
+min_pls <- cvs_pls[ind_pls]
+
+paste( "Minimum MSE of ",  
+        min_pls, 
+         " was produced with ", 
+         sub(" comps","", names(dims_pls)), 
+         " components")
+```
+
+
+```{r}
+# Compute the test MSE
+pls_pred <-  predict(pls_fit, x_test, ncomp = dims_pls)
+mean((pls_pred - y_test)^2)
+```
+
+```{r}
+# Fit PLSR on the whole dataset
+pls_fit2 <-  plsr(y~., data = X, scale = TRUE, ncomp = dims_pls)
+summary(pls_fit2)
+```
+
+```{r}
+# Create variable importance in projection (VIP) plots
+importance_unsort <- data.frame(VIP(pls_fit2, opt.comp=dims_pls))
+importance <- importance_unsort %>% arrange(desc(importance_unsort))
+features <- factor(row.names(importance), levels = row.names(importance))
+
+# Print the VIP together with the data
+W <- X
+W[nrow(W) + 1,] = t(importance_unsort)
+rownames(W)[nrow(W)] <- "importance"
+W <- W[c(nrow(W),1:(nrow(W)-1)),]
+W <- W[,order(-W[1,])] # sort columns by importance
+write.csv(W,'hp1_withML_var_importance.csv')
+```
+
+
+```{r}
+#Plot VIPs
+
+pdf(file="hp1_withML_plsr_vip_total.pdf",width=6,height=3)
+
+ggplot(importance, aes(x=features, y=importance[,1])) + 
+  geom_bar(stat = "identity",fill="#00BFC4") + geom_hline(yintercept=1)
+
+dev.off()
+
+importance_top <- importance[1:50,,drop=FALSE]
+features_top <- factor(row.names(importance_top), levels = row.names(importance_top))
+
+pdf(file="hp1_withML_plsr_vip_top50.pdf",width=20,height=5)
+
+ggplot(importance_top, aes(x=features_top, y=importance_top[,1])) + 
+  geom_bar(stat = "identity",fill="#00BFC4")
+
+dev.off()
+```
+```{r}
+# plot(pls_fit2, plottype = "coef", ncomp=1:3, legendpos = "bottomleft")
+# plot(pls_fit2, plottype = "loadings", ncomp=1:3, legendpos = "bottomleft")
+# plot(pls_fit2, plottype = "scores", ncomp=1:3, legendpos = "bottomleft")
+
+pdf(file="hp1_ex1.pdf",width=5,height=5)
+
+corrplot(
+  pls_fit2,
+  comps = 1:2,
+  plotx = TRUE,
+  ploty = FALSE,
+  radii = c(0.5,1),
+  identify = FALSE,
+  type = "p")
+
+dev.off()
+```
+
+```{r}
+# Plot coefficients
+
+pdf(file="hp1_withML_coeffs.pdf",width=6,height=5)
+coefplot(
+  pls_fit2,
+  ncomp = pls_fit2$ncomp,
+  intercept = FALSE,
+  separate = FALSE,
+  se.whiskers = FALSE,
+  type = "h",
+  lwd = NULL,
+  cex = NULL,
+  xlab = "variable",
+  ylab = "regression coefficient",
+  pretty.xlabels = TRUE,
+  col="#00BFC4"
+)
+dev.off()
+```
+```{r}
+# https://www.rdocumentation.org/packages/polyMatrix/versions/0.3.1/topics/coefs
+# https://www.r-graph-gallery.com/302-lollipop-chart-with-conditional-color.html -> Look at this later
+coeffs = coef(pls_fit2)
+coeff_sort = sort(coeffs[, 1 , 1])
+n=20 # How many of the top components to plot
+dat=c(head(coeff_sort, n),tail(coeff_sort, n))
+
+pdf(file="hp1_withML_coeffs_top.pdf", bg="white",width=12,height=8)
+par(mar=c(15,6,4,1)+.1)
+barplot(dat,las=2,col = c(rep("#F8766D", n), rep("#00BFC4", n)),border=FALSE,ylim=range(pretty(c(0, dat))))
+dev.off()
+
+vip_coeff <- cbind(importance_unsort,coeffs*100)
+rownames(vip_coeff)=colnames(X)
+colnames(vip_coeff)=c("VIP","coeff")
+vip_ord <- vip_coeff[order(vip_coeff$VIP,decreasing=TRUE),]
+coeff_ord <- vip_coeff[order(vip_coeff$coeff,decreasing=TRUE),]
+write.csv(vip_ord,'hp1_withML_vip_coeff.csv')
+write.csv(coeff_ord,'hp1_withML_coeff_vip.csv')
+```
+
+```{r}
+# Plot VIPs and coefficients on the same plot
+
+df <- vip_ord # Sort by VIP first
+df$feature <- rownames(df)
+df$feature <- factor(df$feature, levels = df$feature)
+df_melt <- melt(df)
+
+# VIPs as points and coeffs as bars
+pdf(file="hp1_ordvip_coeff.pdf",width=6,height=5)
+ggplot(NULL) +
+  geom_point(data=df_melt[df_melt$variable == "VIP",],aes(x = feature, y = value, colour = "#00BFC4", group = variable)) +
+  geom_segment(data=df_melt[df_melt$variable == "coeff",],aes(x = feature, y = 0, xend=feature, yend=value, colour = "#F8766D", group = variable)) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) +
+  scale_y_continuous(limits = c(-4, 4), breaks = seq(-4,4,1)) 
+dev.off()
+
+```
+
+
+```{r}
+# Plotting VIPs and coefficeints as bars
+# pdf(file="hp1_ordvip_coeff.pdf",width=6,height=5)
+# df_melt <- melt(df)
+# ggplot(data = df_melt) +
+#   # geom_point(aes(x = feature, y = value, colour = variable, group = variable)) +
+#   geom_segment(aes(x = feature, y = 0, xend=feature, yend=value, colour = variable, group = variable)) +
+#   theme(axis.text.x=element_blank(),
+#         axis.ticks.x=element_blank()) +
+#   scale_y_continuous(limits = c(-4, 4), breaks = seq(-4,4,1))
+# dev.off()
+
+
+df <- coeff_ord # Then sort by coeff
+df$feature <- rownames(df)
+df$feature <- factor(df$feature, levels = df$feature)
+
+df_melt <- melt(df)
+ggplot(data = df_melt) +
+  # geom_point(aes(x = feature, y = value, colour = variable, group = variable))+
+  geom_segment(aes(x = feature, y = 0, xend=feature, yend=value, colour = variable, group = variable))+
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+```
+
+```{r}
+# Plot x-scores on LV1 and LV2 vs. Y value to assess quality of the model
+# https://towardsdatascience.com/an-overview-of-orthogonal-partial-least-squares-dc35da55bd94
+
+# scoreplot(pls_fit2,ncomp = pls_fit2$ncomp)
+xscores <- data.frame(scores(pls_fit2)[,])
+
+fig <- plot_ly(xscores,
+            x=~ Comp.1,
+            y=~ Comp.2,
+            type = 'scatter',
+            mode = 'markers',
+            marker = list(
+                size=5,
+                opacity=0.75),
+            color=~y,
+            colors = 'RdYlGn'
+)
+colorbar(fig)
+reticulate::py_run_string("import sys")
+save_image(fig,"hp1_scoreplot.pdf")
+```
+
+```{r}
+# Perform permutation test validation
+clock=as.numeric(Sys.time())
+set.seed(clock)
+
+perm <- sample(1:length(y_train))
+y_perm <- y_train[perm]
+
+# Train the PLSR model
+
+perm_fit <-  plsr(y_perm~., data = train, scale = TRUE, validation = "CV")
+MSEP_perm <-  MSEP(perm_fit)
+cvs_perm <- MSEP_perm$val[1,1, ]
+mse_perm <- cvs_perm[ind_pls] # Use number of dimensions previously computed
+
+paste( "Permuted MSE of ",  
+        mse_perm, 
+         " was produced with ", 
+         sub(" comps","", names(dims_pls)), 
+         " components")
+
+# Compute the test MSE
+perm_pred <-  predict(perm_fit, x_test, ncomp = dims_pls)
+mean((perm_pred - y_test)^2)
+```
+
+Make predictions on the FDA drug library using the full fit model
+```{r}
+filename <- 'fluorescent_molecules_fda_bits2.csv'
+X_drugs_big <-  read.csv(filename,row.names=NULL,header=TRUE,check.names=FALSE) # Read in FDA drug X
+X_drugs <- X_drugs_big[,colnames(X_drugs_big) %in% colnames(X)] # Retain just the feature names that are also found in X
+
+y_drugs_pred <-  data.frame(predict(pls_fit2, X_drugs, ncomp = dims_pls))
+part_drugs <- cbind(X_drugs_big$Smiles,10^y_drugs_pred)
+colnames(part_drugs) <- c("Smiles","pred_partition_ratio")
+
+write.csv(part_drugs,'drugs_pred_set2_hp1.csv',row.names=FALSE)
+```
